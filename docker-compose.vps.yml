@@ -1,0 +1,77 @@
+version: "3.9"
+
+# VPS deployment: Ratio + Guard Brasil + br-acc integration
+# Run from /opt/apps/ratio/ on Hetzner VPS
+#
+# Prerequisites already running on the VPS:
+#   guard-brasil-api  — port 127.0.0.1:3099 (PII masking, LGPD)
+#   bracc-neo4j       — port 127.0.0.1:7687 (83.7M entity graph)
+#   eagle-eye         — port 127.0.0.1:3090 (licitações monitoring)
+#   infra-caddy-1     — port 80/443 (TLS + routing)
+#
+# Usage:
+#   docker compose -f docker-compose.vps.yml up -d
+#   docker compose -f docker-compose.vps.yml logs -f ratio-api
+
+services:
+  ratio-api:
+    build: .
+    container_name: ratio-api
+    restart: unless-stopped
+    environment:
+      # LLM provider — override via /opt/apps/ratio/.env
+      - GENERATION_PROVIDER=${GENERATION_PROVIDER:-openrouter}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.0-flash-001}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ALIBABA_DASHSCOPE_API_KEY=${ALIBABA_DASHSCOPE_API_KEY}
+      - ALIBABA_DASHSCOPE_BASE_URL=${ALIBABA_DASHSCOPE_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      # Guard Brasil (internal Docker network — same host network)
+      - RATIO_PII_GUARD_ENABLED=1
+      # guard-brasil-api is on the guard-brasil Docker network
+      - GUARD_BRASIL_URL=http://guard-brasil-api:3099
+      # Frontend CORS
+      - API_CORS_ORIGINS=https://ratio.egos.ia.br,http://127.0.0.1:8001
+      # Embedding
+      - EMBED_MODEL=${EMBED_MODEL:-gemini-embedding-001}
+      - GENERATION_MODEL=${GENERATION_MODEL:-gemini-3-flash-preview}
+      - GENERATION_FALLBACK_MODEL=${GENERATION_FALLBACK_MODEL:-gemini-2.5-flash}
+    volumes:
+      # LanceDB vector index — mount from VPS data dir
+      - /opt/data/ratio/lancedb_store:/app/lancedb_store
+      # SQLite source data (optional — needed for ingestion, not for queries)
+      - /opt/data/ratio/data:/app/data
+      # Persistent logs
+      - /opt/data/ratio/logs:/app/logs
+    networks:
+      - infra_bracc
+      - guard-brasil
+    ports:
+      - "127.0.0.1:3085:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  ratio-frontend:
+    image: nginx:alpine
+    container_name: ratio-frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - infra_bracc
+    ports:
+      - "127.0.0.1:3086:80"
+
+networks:
+  infra_bracc:
+    external: true
+    name: infra_bracc
+  guard-brasil:
+    external: true
+    name: guard-brasil
