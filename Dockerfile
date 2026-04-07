@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy requirements first for layer caching
 COPY requirements.txt .
-# lancedb==0.9.0 requires pyarrow<15.0.1; pin before installing everything else
-RUN pip install --no-cache-dir "pyarrow>=12,<15" && \
-    pip install --no-cache-dir -r requirements.txt
+# lancedb==0.9.0 requires pyarrow<15.0.1 — rewrite the explicit 16.0.0 pin
+RUN sed 's/pyarrow==16\.0\.0/pyarrow>=12,<15/' requirements.txt > /tmp/req.txt && \
+    pip install --no-cache-dir -r /tmp/req.txt
 
 # Copy source
 COPY backend/ ./backend/
